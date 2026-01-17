@@ -4,7 +4,7 @@
  */
 
 // Gemini Pro API Key 配置
-const GEMINI_API_KEY = 'AIzaSyBDzRIoMLHvE-oqkcVL1A3HmjRgHmcsmZU';
+const GEMINI_API_KEY = '';
 // 从官方 Quickstart 文档获取的准确 URL
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
 // Gemini Image Generation API URL
