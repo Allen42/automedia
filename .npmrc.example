@@ -1,0 +1,99 @@
+# npm 镜像配置示例
+# 复制此文件为 .npmrc 并根据需要修改
+
+# ========== 国内镜像配置（推荐）==========
+
+# npm 官方源
+# registry=https://registry.npmjs.org/
+
+# 淘宝 npm 镜像（推荐）
+registry=https://registry.npmmirror.com
+
+# 阿里 npm 镜像
+# registry=https://npm.aliyun.com
+
+# 腾讯 npm 镜像
+# registry=https://mirrors.cloud.tencent.com/npm
+
+# ========== Electron 镜像配置 ==========
+
+# 淘宝 Electron 镜像（推荐）
+electron_mirror=https://cdn.npm.taobao.org/dist/electron/
+electron_custom_dir=v
+
+# 官方 Electron 源
+# electron_mirror=https://github.com/electron/electron/releases/download/
+
+# ========== 其他原生模块镜像 ==========
+
+# Canvas 镜像
+canvas_binary_host_mirror=https://cdn.npm.taobao.org/dist/canvas/
+
+# Better-SQLite3 镜像
+better_sqlite3_binary_host_mirror=https://cdn.npm.taobao.org/dist/better-sqlite3/
+
+# node-gyp 镜像
+nodedir=/usr/local/include/node
+
+# ========== 代理配置（如需要）==========
+
+# HTTP 代理
+# proxy=http://proxy.example.com:8080
+
+# HTTPS 代理
+# https-proxy=http://proxy.example.com:8080
+
+# SOCKS 代理
+# socks-proxy=socks5://proxy.example.com:1080
+
+# 禁用 SSL 验证（不推荐，仅在必要时使用）
+# strict-ssl=false
+
+# ========== 其他配置 ==========
+
+# 增加超时时间（毫秒）
+fetch-timeout=60000
+fetch-retry-mintimeout=20000
+fetch-retry-maxtimeout=120000
+
+# 重试次数
+fetch-retries=3
+
+# 并发数
+fetch-max-concurrency=20
+
+# 日志级别
+# loglevel=verbose
+
+# 保存精确版本
+save-exact=false
+
+# 自动保存到 package.json
+save=true
+
+# ========== pnpm 特定配置 ==========
+
+# 使用 pnpm 的严格模式
+shamefully-hoist=false
+
+# 虚拟存储位置
+virtual-store-dir=.pnpm
+
+# ========== 使用说明 ==========
+
+# 1. 复制此文件
+#    cp .npmrc.example .npmrc
+#
+# 2. 根据需要取消注释相应的配置
+#
+# 3. 重新安装依赖
+#    pnpm install
+#
+# 4. 验证配置
+#    npm config list
+#    pnpm config list
+#
+# 5. 清除缓存（如果需要）
+#    pnpm store prune
+#    rm -rf node_modules pnpm-lock.yaml
+#    pnpm install

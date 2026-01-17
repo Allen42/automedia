@@ -1,0 +1,24 @@
+{
+  "ffmpeg": {
+    "path": "/usr/local/bin/ffmpeg",
+    "ffprobe": "/usr/local/bin/ffprobe",
+    "timeout": 300000,
+    "encoding": {
+      "preset": "medium",
+      "crf": 23,
+      "framerate": 30,
+      "resolution": "1920x1080",
+      "pixelFormat": "yuv420p"
+    },
+    "advanced": {
+      "threads": 4,
+      "bufsize": "1835k",
+      "maxrate": "5000k"
+    }
+  },
+  "logging": {
+    "enabled": true,
+    "level": "info",
+    "file": "./logs/ffmpeg.log"
+  }
+}
