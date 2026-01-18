@@ -4,7 +4,7 @@
  */
 
 // Gemini Pro API Key 配置
-const GEMINI_API_KEY = 'AIzaSyBDzRIoMLHvE-oqkcVL1A3HmjRgHmcsmZU';
+const GEMINI_API_KEY = '';
 // 从官方 Quickstart 文档获取的准确 URL
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
 // Gemini Image Generation API URL
@@ -310,82 +310,103 @@ export function parseStoryboards(text: string) {
   
   let currentStoryboard: any = {};
   
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    // 移除可能的 Markdown 标记 (**, ##, - )
+    const line = rawLine.replace(/[\*\#]/g, "").trim();
+
     // 匹配第一行: 镜头001·全景 | 午后·渝州城酒楼
-    // 宽松匹配: 镜头+数字开头
-    if (line.startsWith("镜头") || /^(?:\| )?镜头\d+/.test(line)) {
-       // 如果已有还在处理的，先归档（防止只有部分字段的情况）
-       if (currentStoryboard.id && currentStoryboard.action) {
+    // 宽松匹配: 只要包含 "镜头" 和 数字
+    const shotMatch = line.match(/镜头\s*(\d+)/);
+    
+    // 判定为新镜头的条件：匹配到"镜头+数字"，且看起来像是一个标题行(包含分隔符或长度适中)
+    // 或者即使无法完全确认，只要出现了 "镜头XXX"，我们就认为可能是新的一开始
+    if (shotMatch) {
+       // 如果已有还在处理的，先归档
+       // 只有当旧的有实质内容(action)时才归档，避免因为误判标题导致空对象加入
+       if (currentStoryboard.id && (currentStoryboard.action || currentStoryboard.location)) {
            storyboards.push(currentStoryboard);
+           currentStoryboard = {}; // 重置
+       } else if (currentStoryboard.id && !currentStoryboard.action) {
+           // 这是一个边缘情况：如果上一个只有ID没有内容，可能是解析错误，覆盖它而不是push
+           // 但通常不需要特殊处理，直接覆盖currentStoryboard属性即可，因为下面会重置
        }
        
-       currentStoryboard = { duration: 2 }; // 重置，默认2秒
-       
-       // 提取编号
-       const numMatch = line.match(/镜头(\d+)/);
-       if (numMatch) {
-         currentStoryboard.number = parseInt(numMatch[1]);
-         currentStoryboard.id = `sb-${numMatch[1]}`;
+       // 如果 currentStoryboard 已经被置空（或刚开始），初始化它
+       if (!currentStoryboard.id) {
+            currentStoryboard = { duration: 2 };
+            currentStoryboard.number = parseInt(shotMatch[1]);
+            currentStoryboard.id = `sb-${shotMatch[1]}`;
        }
        
-       // 尝试提取景别、时间和地点
-       // 格式通常为: 镜头001·全景 | 时间·地点
-       const parts = line.split("|").map(p => p.trim());
-       if (parts.length >= 1) {
-          // 处理第一部分: 镜头001·全景
-          const idPart = parts[0];
-          const dotIndex = idPart.indexOf("·");
-          if (dotIndex > -1) {
-              currentStoryboard.shotType = idPart.substring(dotIndex + 1).trim();
-          }
+       // 尝试解析这一行剩下的信息
+       // 典型格式: 镜头001·全景 | 时间·地点
+       // 或者: 镜头 01: 全景, 地点...
+       
+       // 移除 "镜头001" 部分，分析剩余
+       let rest = line.substring(line.indexOf(shotMatch[0]) + shotMatch[0].length);
+       
+       // 移除可能的分隔符
+       rest = rest.replace(/^[ ·:：\.|]+/, ""); 
+       
+       // 尝试按 | 分割
+       const parts = rest.split(/\|/).map(p => p.trim());
+       
+       if (parts.length > 0 && parts[0]) {
+           // 假设第一部分是 景别 (如果有点号分割，则是 景别·其他)
+           // 很多时候格式是: 镜头001·全景
+           // 所以 rest 可能是 "全景 | 午后·地点"
+           // 或者是 "全景" (如果原句是 镜头001·全景)
+           currentStoryboard.shotType = parts[0].split(/[·\s]/)[0]; // 取第一个词
        }
        
-       if (parts.length >= 2) {
-           // 处理第二部分: 时间·地点
-           const timeLocPart = parts[1];
-           const dotIndex = timeLocPart.indexOf("·");
-           if (dotIndex > -1) {
-               currentStoryboard.time = timeLocPart.substring(0, dotIndex).trim();
-               currentStoryboard.location = timeLocPart.substring(dotIndex + 1).trim();
-           } else {
-               // 只有地点或只有时间
-               currentStoryboard.location = timeLocPart; 
+       if (parts.length > 1) {
+           // 第二部分通常是 时间·地点
+           const timeLoc = parts[1];
+           const tlParts = timeLoc.split(/[·\s]/).filter(s => s);
+           if (tlParts.length >= 2) {
+               currentStoryboard.time = tlParts[0];
+               currentStoryboard.location = tlParts.slice(1).join(" ");
+           } else if (tlParts.length === 1) {
+               currentStoryboard.location = tlParts[0];
                currentStoryboard.time = "未知";
            }
        }
+       
+       continue; // 处理完标题行，跳过后续匹配
     }
     
-    // 匹配动作行: 动作：... → 结果：...
-    if (line.includes("动作：")) {
-        const actionPart = line.substring(line.indexOf("动作：") + 3);
-        const arrowIndex = actionPart.indexOf("→");
+    // 匹配动作行
+    if (line.includes("动作") || line.includes("Action")) {
+        // 清理前缀
+        let content = line.replace(/^(?:[-*] )?(?:动作|Action)[:：]\s*/i, "");
+        
+        // 检查是否有 "结果" 或 "->"
+        const arrowIndex = content.indexOf("→");
+        const resIndex = content.indexOf("结果：");
         
         if (arrowIndex > -1) {
-            currentStoryboard.action = actionPart.substring(0, arrowIndex).trim().replace(/^结果：/, ""); 
-            const resultPart = actionPart.substring(arrowIndex + 1).trim();
-            // 去掉可能的 "结果：" 前缀
-            currentStoryboard.result = resultPart.replace(/^结果：/, "").trim();
+            currentStoryboard.action = content.substring(0, arrowIndex).trim();
+            currentStoryboard.result = content.substring(arrowIndex + 1).replace(/^结果[:：]?/, "").trim();
+        } else if (resIndex > -1) {
+             currentStoryboard.action = content.substring(0, resIndex).trim();
+             currentStoryboard.result = content.substring(resIndex + 3).trim();
         } else {
-            // 没有箭头，也就是没有明确的结果部分，全部当作动作
-            currentStoryboard.action = actionPart.trim();
+            currentStoryboard.action = content;
             currentStoryboard.result = "";
         }
     }
     
-    // 匹配情绪行: 情绪：...
-    if (line.includes("情绪：")) {
-        currentStoryboard.emotion = line.substring(line.indexOf("情绪：") + 3).trim();
-        
-        // 情绪通常是最后一行，尝试归档
-        if (currentStoryboard.id) {
-             storyboards.push(currentStoryboard);
-             currentStoryboard = {}; //以此清空防止重复添加
-        }
+    // 匹配情绪行
+    if (line.includes("情绪") || line.includes("Mood")) {
+         currentStoryboard.emotion = line.replace(/^(?:[-*] )?(?:情绪|Mood)[:：]\s*/i, "").trim();
     }
+    
+    // 补充：假如没有明确的"动作："前缀，但我们在一个分镜块里，且当前行不是标题
+    // 这可能是多行描述？ 暂时忽略，保持简单
   }
   
-  // 循环结束，检查最后一个是否还没添加
-  if (currentStoryboard.id && currentStoryboard.action && Object.keys(currentStoryboard).length > 2) {
+  // 循环结束，归档最后一个
+  if (currentStoryboard.id && (currentStoryboard.action || currentStoryboard.location)) {
       storyboards.push(currentStoryboard);
   }
 

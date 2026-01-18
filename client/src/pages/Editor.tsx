@@ -24,6 +24,7 @@ import {
   Film,
   Zap,
   Loader2,
+  Video,
   Image as ImageIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -65,6 +66,7 @@ export default function Editor() {
   const [activeTab, setActiveTab] = useState("novel");
   const [projectName, setProjectName] = useState("");
   const [generatingImages, setGeneratingImages] = useState<Record<string, boolean>>({});
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const { loading, error, handleNovelToScript, handleDecomposeToStoryboards, handlePlanRhythm, handleGenerateImage, parseStoryboards } = useGemini();
 
   const handleCreateProject = () => {
@@ -230,6 +232,100 @@ export default function Editor() {
       setGeneratingImages(prev => ({ ...prev, [storyboardId]: false }));
   };
 
+  const handleExportVideo = async () => {
+    if (!currentProject || currentProject.storyboards.length === 0) {
+      toast.error("没有可用的分镜数据");
+      return;
+    }
+
+    const hasImages = currentProject.storyboards.some(sb => sb.imageUrl);
+    if (!hasImages) {
+        toast.warning("检测到没有任何 AI 生成的画面，视频将无法生成。请先生成关键镜头的画面。");
+        return;
+    }
+
+    try {
+      const outputPath = await (window as any).electronAPI.file.selectDirectory();
+      if (!outputPath) return;
+
+      toast.loading("正在合成漫剧视频，请稍候...", { duration: 10000 }); // Show for a while or untill success
+
+      const result = await (window as any).electronAPI.video.export(currentProject.storyboards, outputPath);
+
+      if (result.success) {
+        toast.dismiss();
+        toast.success(`漫剧生成成功！保存于: ${result.path}`);
+        // 尝试打开该视频或文件夹
+        if (result.path) {
+           (window as any).electronAPI.shell.openPath(result.path); // 打开文件
+           // 或者打开文件夹: 
+           // window.electronAPI.shell.openPath(outputPath);
+        }
+      } else {
+        toast.dismiss();
+        toast.error(`生成失败: ${result.error}`);
+      }
+    } catch (error) {
+      toast.dismiss();
+      console.error(error);
+      toast.error("调用导出接口失败");
+    }
+  };
+
+  const handleBatchGenerateImages = async () => {
+      if (!currentProject?.storyboards?.length) return;
+      
+      const targets = currentProject.storyboards.filter(s => !s.imageUrl);
+      const total = targets.length;
+
+      if (total === 0) {
+          toast.info("所有分镜已有画面，无需生成");
+          return;
+      }
+
+      setIsBatchGenerating(true);
+      toast.loading(`准备批量生成 ${total} 张分镜...`);
+
+      let successCount = 0;
+      // 这里的 currentProject 引用在闭包中可能不是最新的，但 id列表是固定的
+      // 我们需要一种方式更新 state 并保持循环
+      // 简单的做法是：每次循环都获取最新的 state? 不行，React state update is async.
+      // 我们使用局部变量构建更新，最后更新一次？
+      // 不，用户希望看到实时进度。所以必须每次更新 state。
+      
+      // 为了能够更新 state，我们利用 functional update setProjects/setCurrentProject
+      // 我们不需要读取最新的 currentProject 来决定下一个任务，因为 targets 列表已经确定了。
+
+      for (let i = 0; i < total; i++) {
+          const sb = targets[i];
+          toast.loading(`正在批量生图 (${i + 1}/${total}): 镜头 ${sb.number}...`);
+          
+          // 真正的 API 调用
+          const imageUrl = await handleGenerateImage(sb);
+          
+          if (imageUrl) {
+              successCount++;
+              // 更新状态 (局部 + 全局)
+              setCurrentProject(prev => {
+                  if (!prev) return null;
+                  const newSbs = prev.storyboards.map(s => s.id === sb.id ? { ...s, imageUrl } : s);
+                  return { ...prev, storyboards: newSbs };
+              });
+              
+              // 稍微延迟，避免 API 速率限制 (Gemini 3 Pro Image rate limit??)
+              await new Promise(resolve => setTimeout(resolve, 1500)); 
+          } else {
+              toast.error(`镜头 ${sb.number} 生成失败，流程终止`);
+              setIsBatchGenerating(false);
+              return; 
+          }
+      }
+
+      setIsBatchGenerating(false);
+      toast.dismiss();
+      toast.success(`批量生成完成！成功 ${successCount}/${total} 张`);
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       {/* 顶部工具栏 */}
@@ -245,6 +341,16 @@ export default function Editor() {
             <Button variant="outline" size="sm">
               <Settings className="h-4 w-4 mr-2" />
               设置
+            </Button>
+            <Button 
+                variant="default" 
+                size="sm" 
+                className="bg-purple-600 hover:bg-purple-700"
+                onClick={handleExportVideo}
+                disabled={!currentProject || currentProject.storyboards.length === 0}
+            >
+              <Video className="h-4 w-4 mr-2" />
+              生成漫剧
             </Button>
             <Button variant="outline" size="sm">
               <Download className="h-4 w-4 mr-2" />
@@ -499,20 +605,35 @@ export default function Editor() {
                   <Card className="p-6 border-border/50">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-lg font-semibold">分镜规划</h3>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          if (currentProject.storyboardsText) {
-                            navigator.clipboard.writeText(
-                              currentProject.storyboardsText
-                            );
-                            toast.success("已复制到剪贴板");
-                          }
-                        }}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                            variant="default"
+                            size="sm"
+                            disabled={isBatchGenerating}
+                            onClick={handleBatchGenerateImages}
+                        >
+                            {isBatchGenerating ? (
+                                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                            ) : (
+                                <Zap className="h-3 w-3 mr-1" />
+                            )}
+                            {isBatchGenerating ? "生成中..." : "一键生图"}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                            if (currentProject.storyboardsText) {
+                                navigator.clipboard.writeText(
+                                currentProject.storyboardsText
+                                );
+                                toast.success("已复制到剪贴板");
+                            }
+                            }}
+                        >
+                            <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                     {currentProject.storyboards.length === 0 ? (
                       <div className="text-center py-12">

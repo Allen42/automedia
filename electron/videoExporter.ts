@@ -1,11 +1,9 @@
 import path from 'path';
 import fs from 'fs';
-import { createCanvas } from 'canvas';
 import ffmpeg from 'fluent-ffmpeg';
 
-// 配置 FFmpeg 路径（如果需要）
-// ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
-// ffmpeg.setFfprobePath('/usr/bin/ffprobe');
+// 确保 FFmpeg 可用 (如果环境变量已配置)
+// ffmpeg.setFfmpegPath('...'); 
 
 interface Storyboard {
   id: string;
@@ -17,183 +15,107 @@ interface Storyboard {
   result: string;
   emotion: string;
   duration: number;
+  imageUrl?: string; // Base64 Data URL
 }
 
 /**
- * 生成分镜图像
- */
-function generateStoryboardImage(storyboard: Storyboard): Buffer {
-  try {
-    // 创建 Canvas（1920x1080）
-    const canvas = createCanvas(1920, 1080);
-    const ctx = canvas.getContext('2d');
-
-    // 背景色
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, 1920, 1080);
-
-    // 标题
-    ctx.fillStyle = '#0ea5e9';
-    ctx.font = 'bold 48px Arial';
-    ctx.fillText(`镜头 ${storyboard.number}`, 60, 100);
-
-    // 信息区域
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = '24px Arial';
-    let y = 180;
-    const lineHeight = 50;
-
-    ctx.fillText(`时间: ${storyboard.time}`, 60, y);
-    y += lineHeight;
-
-    ctx.fillText(`地点: ${storyboard.location}`, 60, y);
-    y += lineHeight;
-
-    ctx.fillText(`景别: ${storyboard.shotType}`, 60, y);
-    y += lineHeight;
-
-    ctx.fillText(`时长: ${storyboard.duration}秒`, 60, y);
-    y += lineHeight + 20;
-
-    // 动作描写
-    ctx.fillStyle = '#a855f7';
-    ctx.font = 'bold 28px Arial';
-    ctx.fillText('动作描写:', 60, y);
-    y += 50;
-
-    ctx.fillStyle = '#cbd5e1';
-    ctx.font = '20px Arial';
-    const actionLines = wrapText(ctx, storyboard.action, 1800, 25);
-    actionLines.forEach((line) => {
-      ctx.fillText(line, 80, y);
-      y += 40;
-    });
-
-    y += 20;
-
-    // 情绪
-    ctx.fillStyle = '#a855f7';
-    ctx.font = 'bold 28px Arial';
-    ctx.fillText('情绪:', 60, y);
-    y += 50;
-
-    ctx.fillStyle = '#cbd5e1';
-    ctx.font = '20px Arial';
-    ctx.fillText(storyboard.emotion, 80, y);
-
-    return canvas.toBuffer('image/png');
-  } catch (error) {
-    console.error('生成分镜图像失败:', error);
-    throw error;
-  }
-}
-
-/**
- * 文本换行
- */
-function wrapText(
-  ctx: any,
-  text: string,
-  maxWidth: number,
-  lineHeight: number
-): string[] {
-  const words = text.split('');
-  const lines: string[] = [];
-  let currentLine = '';
-
-  for (const word of words) {
-    const testLine = currentLine + word;
-    const metrics = ctx.measureText(testLine);
-
-    if (metrics.width > maxWidth && currentLine !== '') {
-      lines.push(currentLine);
-      currentLine = word;
-    } else {
-      currentLine = testLine;
-    }
-  }
-
-  if (currentLine !== '') {
-    lines.push(currentLine);
-  }
-
-  return lines;
-}
-
-/**
- * 导出视频
+ * 导出视频 (基于图片序列)
  */
 export async function exportVideo(storyboards: Storyboard[], outputPath: string): Promise<string> {
   return new Promise(async (resolve, reject) => {
+    let tempDir = '';
+    
     try {
-      // 创建临时目录存放图像
-      const tempDir = path.join(outputPath, '.temp_storyboards');
+      // 1. 创建临时目录
+      const timestamp = new Date().getTime();
+      tempDir = path.join(outputPath, `.temp_manju_frames_${timestamp}`);
       if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
       }
 
-      // 生成分镜图像
-      console.log('正在生成分镜图像...');
-      const imagePaths: string[] = [];
+      console.log('正在准备视频素材...', tempDir);
+      
+      const fileListLines: string[] = [];
+      let hasImages = false;
 
+      // 2. 处理每一帧
       for (let i = 0; i < storyboards.length; i++) {
-        const storyboard = storyboards[i];
-        const imageBuffer = generateStoryboardImage(storyboard);
-        const imagePath = path.join(tempDir, `storyboard_${String(i + 1).padStart(3, '0')}.png`);
-        fs.writeFileSync(imagePath, imageBuffer);
-        imagePaths.push(imagePath);
+        const sb = storyboards[i];
+        
+        // 默认显示时长 3秒，或者使用设定时长
+        const duration = sb.duration || 3;
+        
+        let imagePath = '';
+
+        if (sb.imageUrl && sb.imageUrl.startsWith('data:image')) {
+            // 保存 Base64 图片
+            const base64Data = sb.imageUrl.replace(/^data:image\/\w+;base64,/, "");
+            const buffer = Buffer.from(base64Data, 'base64');
+            imagePath = path.join(tempDir, `frame_${String(i).padStart(3, '0')}.png`);
+            fs.writeFileSync(imagePath, buffer);
+            hasImages = true;
+        } else {
+            console.warn(`镜头 ${sb.number} 缺少 AI 图片，跳过视频合成。`);
+            // TODO: 生成纯色占位图? 暂时跳过，这意味着视频会黑屏或者少一段
+            // 为保证视频完整性，如果缺失图片，应该生成一个黑底文字图？
+            // 由于移除 canvas 依赖，这里暂时不做 fallback，或后续添加简单的 buffer 生成
+            continue; 
+        }
+
+        // 写入 concat 列表格式 (注意 Windows 路径转义)
+        // file 'C:\path\to\file.png'
+        // duration 5
+        const safePath = imagePath.replace(/\\/g, '/');
+        fileListLines.push(`file '${safePath}'`);
+        fileListLines.push(`duration ${duration}`);
       }
 
-      // 生成视频
-      console.log('正在生成视频...');
-      const timestamp = new Date().getTime();
-      const videoPath = path.join(outputPath, `漫剧_${timestamp}.mp4`);
+      if (!hasImages) {
+          throw new Error("没有有效的图片数据，无法生成视频。请先进行 AI 生图。");
+      }
+      
+      // FFmpeg concat demuxer 的特别规则：最后一张图必须重复一次条目（不带 duration）或者是作为一个流的结束。
+      // 标准做法是让最后一个条目也有 duration，这样它会持续显示。
+      // 但是有些 ffmpeg 版本若最后一条有 duration，可能会卡住或者黑屏。
+      // 这里的做法是列表里的 duration 实际上是"这条目显示多久后切换到下一条"。
+      // 下一条如果没有，就是结束。所以最后一个 duration 是有效的。
+      // 为了保险，有些教程建议重复最后一帧。暂时按标准尝试。
+      
+      const listPath = path.join(tempDir, 'input.txt');
+      fs.writeFileSync(listPath, fileListLines.join('\n'));
 
-      // 创建 FFmpeg 命令
-      const firstImage = imagePaths[0];
-      const duration = storyboards.reduce((sum, sb) => sum + (sb.duration || 5), 0);
+      // 3. 生成视频
+      console.log('正在调用 FFmpeg 合成视频...');
+      const videoFilename = `Manju_Video_${timestamp}.mp4`;
+      const videoPath = path.join(outputPath, videoFilename);
 
-      ffmpeg(firstImage)
-        .inputOptions(['-loop', '1'])
-        .inputOptions(['-t', String(duration)])
+      ffmpeg()
+        .input(listPath)
+        .inputOptions(['-f', 'concat', '-safe', '0'])
         .outputOptions([
-          '-c:v',
-          'libx264',
-          '-pix_fmt',
-          'yuv420p',
-          '-r',
-          '30',
-          '-vf',
-          `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2`,
+          '-c:v', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-r', '30', // 30 fps
+          '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2' // 统一缩放
         ])
         .output(videoPath)
+        .on('start', (cmd) => {
+            console.log('FFmpeg 命令:', cmd);
+        })
         .on('end', () => {
           console.log('视频生成完成:', videoPath);
-
-          // 清理临时文件
-          imagePaths.forEach((imagePath) => {
-            try {
-              fs.unlinkSync(imagePath);
-            } catch (error) {
-              console.warn('删除临时文件失败:', imagePath);
-            }
-          });
-
-          try {
-            fs.rmdirSync(tempDir);
-          } catch (error) {
-            console.warn('删除临时目录失败:', tempDir);
-          }
-
+          // 清理临时文件 (可选，由于是 electron 本地应用，保留在此以便调试，或者稍后删除)
+          // fs.rmdirSync(tempDir, { recursive: true });
           resolve(videoPath);
         })
-        .on('error', (error) => {
-          console.error('视频生成失败:', error);
-          reject(error);
+        .on('error', (err) => {
+          console.error('FFmpeg 错误:', err);
+          reject(new Error(`FFmpeg 生成失败: ${err.message}`));
         })
         .run();
+
     } catch (error) {
-      console.error('导出视频失败:', error);
+      console.error('导出视频流程异常:', error);
       reject(error);
     }
   });
